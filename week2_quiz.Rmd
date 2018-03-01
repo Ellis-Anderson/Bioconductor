@@ -1,0 +1,85 @@
+---
+title: "week2_quiz"
+output: html_document
+---
+
+# Week 2 Quiz answers and R code
+
+__Question 1:__ What is the GC content of “chr22” in the “hg19” build of the human genome?
+
+```{r}
+library(BSgenome)
+library(GenomicRanges)
+library(BiocInstaller)
+available.genomes()
+biocLite("BSgenome.Hsapiens.UCSC.hg19")
+library(BSgenome.Hsapiens.UCSC.hg19)
+
+letterFrequency(Hsapiens$chr22, "GC") / (51304566 - letterFrequency(Hsapiens$chr22, "N"))
+```
+
+__Answer:__ 0.4798807 
+
+
+__Background:__ In the previous assessment we studied H3K27me3 “narrowPeak” regions from the H1 cell line (recall that the Roadmap ID for this cell line is “E003”). We want to examine whether the GC content of the regions influence the signal; in other words wether the reported results appear biased by GC content.
+
+__Question 2:__ What is mean GC content of H3K27me3 “narrowPeak” regions from Epigenomics Roadmap from the H1 stem cell line on chr 22.
+
+```{r}
+library(AnnotationHub)
+ah = AnnotationHub()
+ah = subset(ah, species == "Homo sapiens")
+ah = query(ah, c("H3K27me3", "E003"))
+h3k27 = ah[[2]]
+
+h3k27.22 = subset(h3k27, seqnames=="chr22")
+
+chr22.vw = Views(Hsapiens, h3k27.22)
+
+mean(letterFrequency(chr22.vw, "GC", as.prob = TRUE))
+```
+__Answer:__ 0.528866
+
+
+The “narrowPeak” regions includes information on a value they call “signalValue”.
+
+__Question 3:__ What is the correlation between GC content and “signalValue” of these regions (on chr22)?
+
+```{r}
+signal = mcols(chr22.vw)$signalValue
+gc_h3k27 = letterFrequency(chr22.vw, "GC", as.prob = TRUE)
+cor(signal, gc_h3k27)
+```
+
+__Answer:__ 0.004467924
+
+
+__Question 4__: what is the correlation between the “signalValue” of the “narrowPeak” regions and the average “fc.signal” across the same regions?
+
+__Clarification__: First compute the average “fc.signal” for across each region, for example using “Views”; this yields a single number of each region. Next correlate these numbers with the “signalValue” of the “narrowPeaks”.
+
+```{r}
+ah = AnnotationHub()
+ah = subset(ah, species == "Homo sapiens")
+ah = query(ah, c("H3K27me3", "fc.signal"))
+fc.signal = ah[[3]]
+
+fc = import(fc.signal, which=GRanges("chr22", ranges = IRanges(1, 10^8)), as="Rle")
+fc22 = fc$chr22
+
+fcsignal = Views(fc22, start = start(h3k27.22), end = end(h3k27.22)) # get fc signals for m3k27 peaks
+
+fcmean = mean(fcsignal) # get means
+
+cor(fcmean, signal)
+```
+
+__Answer:__ 0.9149614
+
+
+```{r}
+fc = import(fc.signal, which=GRanges("chr22", ranges = IRanges(1, 10^8)))
+sum(fc$chr22 >= 1)
+```
+
+__Answer:__ 10914671

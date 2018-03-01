@@ -1,0 +1,101 @@
+---
+title: "coursera_week1"
+output: pdf_document
+---
+
+## Week 1 Use Case highlighting AnnotationHub and GRanges
+
+This file works through the use case from week 1 and looks at H3K4me3 modifications from
+the GM12878 cell line. 
+
+#### Setup
+```{r}
+library(AnnotationHub)
+library(rtracklayer)
+library(GenomicRanges)
+ahub = AnnotationHub()
+ahub = subset(ahub, species == "Homo sapiens")
+result_dbs = query(ahub, c("H3K4me3", "GM12878"))
+result_dbs
+```
+
+I'll be working with the Encode data for this exercise. 
+More Specifically I'll be taking a look at rep1 from the broadPeak and narrowPeak files.
+
+```{r}
+gr1 = result_dbs[[2]] # rep1 broadPeak data
+gr2 = result_dbs[[4]] # rep1 narrowPeak data
+gr1_meta = result_dbs[2]
+gr2_meta = result_dbs[4]
+head(gr1)
+summary(width(gr1)) # gives distribution of IRange width of broad peaks
+summary(width(gr2)) # gives distribution of Irange width of narrow peaks
+```
+
+The width of the narrow peak data looks a little strange in that the min, and median values are both 150. 
+Likely something about the data-processing led to this.
+
+```{r}
+table(width(gr2)) # over 74 thousand occurences of 150
+```
+
+However, the broad peaks are a little too broad for histone modification so we'll look strictly at the narrow peak data from here on out. 
+Next we need gene annotation data so we can take a look at whether or not H3K4me3 modifications are enriched in prometer regions. 
+We'll use refseq data for our annotations.
+
+__NOTE:__ There's a better way to do this we haven't covered in the course yet. This uses transcript database objects. 
+
+```{r}
+refseq_res = query(ahub, "RefSeq")
+refseq_res # gives several files, all with the same name
+refseq_res$genome # the files are differentiated by genome version, we want hg19
+genes = refseq_res[[1]]
+genes
+```
+
+This gives us a lot of data including exon locations for each sample. 
+However, we only really need the start site of each transcript. 
+This should be easy but lets take a little look into these data. 
+
+```{r}
+table(table(genes$name)) # this will show us how many genes have any given number of transcripts
+
+prom = promoters(genes) # this will give us the IRanges for promoter sequences
+table(width(prom)) # how large are our promoters?
+```
+
+Now we've got our promoter regions and our peaks, so we'll take a look at how frequently those two overlap. 
+
+```{r}
+peaks = gr2
+overlap = findOverlaps(prom, peaks)
+length(unique(queryHits(overlap))) # our number of promoters with a peak in them
+length(unique(subjectHits(overlap))) # our number of peaks with a promoter in them
+
+length(unique(subjectHits(overlap))) / length(peaks) # this gives us a % of peaks within promoters
+length(unique(queryHits(overlap))) / length(prom) # this gives us a % of promoters with peaks
+```
+
+We've got some numbers now, but how can we quanitfy them and decide if this result is significant? 
+Lets start by taking a look at how many bases these features cover. 
+
+```{r}
+sum(width(reduce(peaks, ignore.strand=TRUE))) / 10^6 #gives us gigabases of coverage for peaks
+sum(width(reduce(prom, ignore.strand=TRUE))) / 10^6 #gives us gigabases of coverage for proms
+sum(width(intersect(peaks, prom, ignore.strand=TRUE))) / 10^6 #gives gigabases of intersection
+```
+
+This coverage information is still interesting but maybe not statistically sound. 
+We'll next make a matrix comparing bases of peaks shared with promoters, bases of promoters with no peaks, bases of peaks with no promoters and bases with neither.
+
+```{r}
+in_out = matrix(0, ncol=2, nrow=2)
+colnames(in_out) = c('in', 'out')
+rownames(in_out) = c('in', 'out')
+in_out[1,1] = sum(width(intersect(peaks, prom, ignore.strand=TRUE))) / 10^6 #peaks and promoters
+in_out[1,2] = sum(width(setdiff(peaks, prom, ignore.strand=TRUE))) / 10^6 # peaks without promoters
+in_out[2,1] = sum(width(setdiff(prom, peaks, ignore.strand=TRUE))) / 10^6 # promoters without peaks
+in_out[2,2] = 3*10^3 - sum(in_out) # human genome without peaks or promoters
+fisher.test(in_out) # odds ratio
+```
+Using the fisher test to get our odds ratio we notice that there definitely seems to be an enrichment of H3K4me3 in promoter areas. 
