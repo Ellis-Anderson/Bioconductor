@@ -11,6 +11,7 @@ __Question 1:__ What is the GC content of “chr22” in the “hg19” build of
 library(BSgenome)
 library(GenomicRanges)
 library(BiocInstaller)
+library(GenomicFeatures)
 available.genomes()
 biocLite("BSgenome.Hsapiens.UCSC.hg19")
 library(BSgenome.Hsapiens.UCSC.hg19)
@@ -32,9 +33,9 @@ ah = subset(ah, species == "Homo sapiens")
 ah = query(ah, c("H3K27me3", "E003"))
 h3k27 = ah[[2]]
 
-h3k27.22 = subset(h3k27, seqnames=="chr22")
+h3k27.22 = subset(h3k27, seqnames=="chr22") # Select only chr22 from the h3k27 data
 
-chr22.vw = Views(Hsapiens, h3k27.22)
+chr22.vw = Views(Hsapiens, h3k27.22) # use the h3k27 ranges to subset parts of H sapiens genome
 
 mean(letterFrequency(chr22.vw, "GC", as.prob = TRUE))
 ```
@@ -46,7 +47,7 @@ The “narrowPeak” regions includes information on a value they call “signal
 __Question 3:__ What is the correlation between GC content and “signalValue” of these regions (on chr22)?
 
 ```{r}
-signal = mcols(chr22.vw)$signalValue
+signal = mcols(chr22.vw)$signalValue #mcols allows you to use the S'column' notation on s4 objects
 gc_h3k27 = letterFrequency(chr22.vw, "GC", as.prob = TRUE)
 cor(signal, gc_h3k27)
 ```
@@ -62,12 +63,12 @@ __Clarification__: First compute the average “fc.signal” for across each reg
 ah = AnnotationHub()
 ah = subset(ah, species == "Homo sapiens")
 ah = query(ah, c("H3K27me3", "fc.signal"))
-fc.signal = ah[[3]]
+fc.signal = ah[["AH32033"]]
 
 fc = import(fc.signal, which=GRanges("chr22", ranges = IRanges(1, 10^8)), as="Rle")
 fc22 = fc$chr22
 
-fcsignal = Views(fc22, start = start(h3k27.22), end = end(h3k27.22)) # get fc signals for m3k27 peaks
+fcsignal = Views(fc22, start = start(h3k27.22), end = end(h3k27.22)) # get fc signals for h3k27 peaks
 
 fcmean = mean(fcsignal) # get means
 
@@ -77,9 +78,151 @@ cor(fcmean, signal)
 __Answer:__ 0.9149614
 
 
+
+__Question 5:__ How many bases on chr22 have an fc.signal greater than or equal to 1?
+
 ```{r}
-fc = import(fc.signal, which=GRanges("chr22", ranges = IRanges(1, 10^8)))
-sum(fc$chr22 >= 1)
+fc = import(fc.signal, which=GRanges("chr22", ranges = IRanges(1, 10^8)), as="Rle")
+fc22 = fc$chr22
+sum(fc22 >= 1)
 ```
 
 __Answer:__ 10914671
+
+
+
+The H1 stem cell line is an embryonic stem cell line, a so-called pluripotent cell. Many epigenetic marks change upon differentiation. We will examine this. We choose the cell type with Roadmap ID “E055” which is foreskin fibroblast primary cells.
+
+We will use the “fc.signal” for this cell type for the H3K27me3 mark, on chr22. We now have a signal track for E003 and a signal track for E055. We want to identify regions of the genome which gain H3K27me3 upon differentiation. These are regions which have a higher signal in E055 than in E003. To do this properly, we would need to standardize (normalize) the signal across the two samples; we will ignore this for now.
+
+__Question 6:__ Identify the regions of the genome where the signal in E003 is 0.5 or lower and the signal in E055 is 2 or higher.
+
+```{r}
+query(ah, c("E055", "fc.signal"))
+H3K27.55 = ah[["AH32470"]]
+
+#Import the fc.signal BigWig file as Rle
+fc_eo55 = import(H3K27.55, which=GRanges("chr22", ranges = IRanges(1, 10^8)), as="Rle")
+fc_eo55_22 = fc_eo55$chr22 # Select chr22
+
+# subset based on criteria
+e003 = slice(fc22, upper = 0.5)
+e055 = slice(fc_eo55_22, lower = 2) #slice creates a views object
+
+fc.signal.55 <- as(e055, "IRanges") # convert to Iranges
+fc.signal.22 <- as(e003, "IRanges")
+
+diff_exp = intersect(fc.signal.22, fc.signal.55) # find spots where e003 < .5 and e055 > 2
+
+sum(width(diff_exp))
+```
+
+__Answer:__ 1869937
+
+
+
+CpG Islands are dense clusters of CpGs. The classic definition of a CpG Island compares the observed to the expected frequencies of CpG dinucleotides as well as the GC content.
+
+Specifically, the observed CpG frequency is just the number of “CG” dinucleotides in a region. The expected CpG frequency is defined as the frequency of C multiplied by the frequency of G divided by the length of the region.
+
+__Question 7:__ What is the average observed-to-expected ratio of CpG dinucleotides for CpG Islands on chromosome 22?
+
+```{r}
+ah = AnnotationHub()
+ah = subset(ah, species=="Homo sapiens")
+query(ah, c("hg19", "CpG Islands"))
+
+cpg_data = ah[["AH5086"]]
+cpg_data = subset(cpg_data, seqnames == "chr22") # subset cpg ranges to only chr22
+
+cpg_view = Views(Hsapiens, cpg_data) # subset Hsapiens by cpg ranges
+
+cpg_dinuc = dinucleotideFrequency(cpg_view) # get dinucleotide frequency
+
+CG_freq = cpg_dinuc[,"CG"] # get vector of CG frequency
+G_freq = letterFrequency(cpg_view, "G") # get vector of G freq
+C_freq = letterFrequency(cpg_view, "C") # get vector of C freq
+cpg_length = width(cpg_view) # get vector of island lengths
+
+mean(CG_freq /((C_freq * G_freq) / cpg_length))
+```
+
+__Answer:__ 0.8340929
+
+
+
+A TATA box is a DNA element of the form “TATAAA”. Around 25% of genes should have a TATA box in their promoter. We will examine this statement.
+
+__Question 8:__ How many TATA boxes are there on chr 22 of build hg19 of the human genome?
+
+Clarification: You need to remember to search both forward and reverse strands.
+
+```{r}
+chr22 = Hsapiens$chr22
+tata = DNAString("TATAAA")
+tata_r = reverseComplement(tata)
+forw = countPattern(tata, chr22)
+rev = countPattern(tata_r, chr22)
+forw + rev
+```
+
+__Answer:__
+
+
+
+__Question 9:__ How many promoters of transcripts on chromosome 22 containing a coding sequence, contains a TATA box on the same strand as the transcript?
+
+Clarification: Use the TxDb.Hsapiens.UCSC.hg19.knownGene package to define transcripts and coding sequence. Here, we defined a promoter to be 900bp upstream and 100bp downstream of the transcription start site.
+
+
+```{r}
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+txdb_gene = TxDb.Hsapiens.UCSC.hg19.knownGene
+gr = GRanges(seqnames = "chr22", ranges = IRanges(1, 52330658))
+
+chr22_trx = subsetByOverlaps(transcripts(txdb_gene), gr, ignore.strand=TRUE) # get transcripts
+chr22_proms = promoters(chr22_trx, upstream=900, downstream = 100) # get promoters
+chr22_genes = subsetByOverlaps(genes(txdb_gene), gr, ignore.strand=TRUE) # get coding seqs
+
+genesxproms = subsetByOverlaps(chr22_proms, chr22_genes) # subset to get proms with codinng seqs
+
+genesxproms_view = Views(Hsapiens, genesxproms) # get DNA strings for querying
+
+tata_match = unlist(vmatchPattern(tata, DNAStringSet(genesxproms_view))) #unlist RLElist
+
+length(unique(start(tata_match))) # get length of the unique matches
+```
+
+__Answer:__ 140 
+
+```{r}
+# The below doesn't work for this analysis but provides valuable info on how to add columns
+# of metadata. This doesn't work because values with multiples are excluded altogether.
+is.unq = matrix(data=isUnique(start(genesxproms_view)))
+old.meta = as.data.frame(values(genesxproms_view))
+new.meta = cbind(old.meta, is.unq)
+values(genesxproms_view) = new.meta
+
+unq_genesxproms_view = genesxproms_view[mcols(genesxproms_view)$is.unq == TRUE]
+sum(vcountPattern(tata, DNAStringSet(unq_genesxproms_view)))
+```
+
+
+
+It is possible for two promoters from different transcripts to overlap, in which case the regulatory features inside the overlap might affect both transcripts. This happens frequently in bacteria.
+
+__Question 10:__ How many bases on chr22 are part of more than one promoter of a coding sequence?
+
+Clarification: Use the TxDb.Hsapiens.UCSC.hg19.knownGene package to define transcripts and coding sequence. Here, we define a promoter to be 900bp upstream and 100bp downstream of the transcription start site. In this case, ignore strand in the analysis.
+
+```{r}
+chr22_trx = subsetByOverlaps(transcripts(txdb_gene), gr, ignore.strand=TRUE)
+chr22_proms = promoters(chr22_trx, upstream=900, downstream = 100) # get promoters for transcripts
+trx_len = transcriptLengths(txdb_gene, with.cds_len = TRUE) # get trx with cds_len to determine which proms have coding sequences
+trx_len = subset(trx_len, cds_len > 0) # all transcripts with coding seqs
+trx_cds = chr22_proms[mcols(chr22_proms)$tx_id %in% trx_len$tx_id] # subset to only keep promoters from transcripts with coding seqs.
+trx_cds_cov = coverage(trx_cds) #returns Rle list with num of trx for each prom
+sum(trx_cds_cov[["chr22"]] > 1) #sums chr22 info with 2+ transcripts
+```
+
+__Answer:__ 306920
